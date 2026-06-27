@@ -1,0 +1,8 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "app/api/generate/route.ts": { "maxDuration": 120 },
+    "app/api/generate/extract/route.ts": { "maxDuration": 60 },
+    "app/api/chat/route.ts": { "maxDuration": 60 }
+  }
+}
