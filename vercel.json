@@ -1,14 +1,11 @@
 {
   "framework": "nextjs",
   "functions": {
-    "app/api/generate/route.ts": {
-      "maxDuration": 60
-    },
-    "app/api/generate/extract/route.ts": {
-      "maxDuration": 60
-    },
-    "app/api/chat/route.ts": {
-      "maxDuration": 60
-    }
+    "app/api/generate/start/route.ts": { "maxDuration": 15 },
+    "app/api/generate/process/route.ts": { "maxDuration": 60 },
+    "app/api/generate/status/route.ts": { "maxDuration": 10 },
+    "app/api/generate/route.ts": { "maxDuration": 60 },
+    "app/api/generate/extract/route.ts": { "maxDuration": 60 },
+    "app/api/chat/route.ts": { "maxDuration": 60 }
   }
 }

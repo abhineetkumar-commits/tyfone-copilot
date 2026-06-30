@@ -157,6 +157,7 @@ export default function GeneratePage() {
   const addDocsRef = useRef<HTMLInputElement>(null);
   const [extracting, setExtracting] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ playbook?: PlaybookData; checklist?: ChecklistData; driveFileCount?: number; hasMSA?: boolean } | null>(null);
@@ -232,7 +233,7 @@ export default function GeneratePage() {
 
   async function generate() {
     if (!setup.cuName.trim()) { setError('Credit Union name is required'); return; }
-    setLoading(true); setError(''); setResult(null);
+    setLoading(true); setError(''); setResult(null); setProgress('Starting…');
     try {
       const fd = new FormData();
       fd.append('creditUnionName', setup.cuName);
@@ -249,24 +250,49 @@ export default function GeneratePage() {
         fd.append(`additionalDoc_${i}`, additionalDocs[i].file);
       }
       fd.append('additionalDocCount', String(additionalDocs.length));
-      const res = await fetch('/api/generate', { method: 'POST', body: fd });
-      let data: { error?: string; playbook?: PlaybookData; checklist?: ChecklistData; driveFileCount?: number; hasMSA?: boolean };
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error(
-          res.status === 504 || res.status === 408
-            ? 'Generation timed out — try generating Playbook or Checklist separately instead of Both, or reduce additional documents.'
-            : `Server error (${res.status}). Please try again in a moment.`
-        );
+
+      // Kick off background generation — this returns immediately with a job
+      // ID. The actual AI generation runs in a separate request with its own
+      // full timeout budget, so we're never blocked by the 60s serverless
+      // function limit, no matter how long full-detail generation takes.
+      const startRes = await fetch('/api/generate/start', { method: 'POST', body: fd });
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error || 'Failed to start generation');
+      const jobId = startData.jobId as string;
+
+      // Poll for completion
+      const POLL_INTERVAL_MS = 2000;
+      const MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes ceiling
+      const pollStart = Date.now();
+
+      while (true) {
+        if (Date.now() - pollStart > MAX_WAIT_MS) {
+          throw new Error('Generation is taking unusually long (over 10 minutes). Please try again or contact support.');
+        }
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+        const statusRes = await fetch(`/api/generate/status?id=${jobId}`);
+        if (!statusRes.ok) {
+          if (statusRes.status === 404) throw new Error('Job expired or not found — please try generating again.');
+          continue; // transient error, keep polling
+        }
+        const job = await statusRes.json();
+        if (job.progress) setProgress(job.progress);
+
+        if (job.status === 'complete') {
+          setResult(job.result);
+          setActiveTab(job.result?.playbook ? 'playbook' : 'checklist');
+          break;
+        }
+        if (job.status === 'error') {
+          throw new Error(job.error || 'Generation failed');
+        }
+        // status is 'pending' or 'running' — keep polling
       }
-      if (!res.ok) throw new Error(data.error || 'Generation failed');
-      setResult(data);
-      setActiveTab(data.playbook ? 'playbook' : 'checklist');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
     setLoading(false);
+    setProgress('');
   }
 
   async function exportDoc(type: 'playbook' | 'checklist') {
@@ -705,7 +731,8 @@ export default function GeneratePage() {
               <div style={{ textAlign: 'center', padding: '60px 0' }}>
                 <div style={{ width: 44, height: 44, border: '3px solid #e2e8f0', borderTopColor: '#4A9FD4', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }}/>
                 <div style={{ fontSize: 15, fontWeight: 600, color: '#0f2540', marginBottom: 6 }}>Generating…</div>
-                <div style={{ fontSize: 13, color: '#94a3b8', animation: 'pulse 2s infinite' }}>{msaFile ? 'Reading MSA · ' : ''}{setup.integrations.length > 0 ? `Analysing ${setup.integrations.length} integrations · ` : ''}Building documents…</div>
+                <div style={{ fontSize: 13, color: '#94a3b8', animation: 'pulse 2s infinite' }}>{progress || 'Starting…'}</div>
+                <div style={{ fontSize: 11, color: '#cbd5e1', marginTop: 8 }}>This can take a minute or two for a complete, detailed playbook — feel free to wait, it's still working.</div>
               </div>
             )}
 
