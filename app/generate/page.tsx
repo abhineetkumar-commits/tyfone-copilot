@@ -193,14 +193,9 @@ export default function GeneratePage() {
     setExtracting(false);
   }
 
-  const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4MB per file
-  const MAX_TOTAL_BYTES = 3.8 * 1024 * 1024; // stay safely under Vercel's 4.5MB request body limit
+  const MAX_TOTAL_BYTES = 3.8 * 1024 * 1024; // informational only — used for the size indicator, not enforced
 
   async function handleMSA(file: File) {
-    if (file.size > MAX_FILE_BYTES) {
-      setError(`"${file.name}" is ${(file.size/1024/1024).toFixed(1)}MB — please upload a file under 4MB (try exporting just the text, or splitting the document).`);
-      return;
-    }
     setError('');
     setMsaFile(file);
     await runExtraction(file, additionalDocs);
@@ -208,18 +203,8 @@ export default function GeneratePage() {
 
   async function handleAdditionalDocs(files: FileList | null) {
     if (!files) return;
-    const oversized = Array.from(files).filter(f => f.size > MAX_FILE_BYTES);
-    if (oversized.length) {
-      setError(`"${oversized[0].name}" is ${(oversized[0].size/1024/1024).toFixed(1)}MB — please upload files under 4MB each.`);
-      return;
-    }
     const newDocs: AdditionalDoc[] = Array.from(files).map(file => ({ file, name: file.name, size: file.size }));
     const merged = [...additionalDocs, ...newDocs];
-    const totalBytes = (msaFile?.size || 0) + merged.reduce((sum, d) => sum + d.size, 0);
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      setError(`Total upload size (${(totalBytes/1024/1024).toFixed(1)}MB) exceeds the 3.8MB limit. Remove a document or use a smaller MSA file.`);
-      return;
-    }
     setError('');
     setAdditionalDocs(merged);
     await runExtraction(msaFile, merged);
@@ -247,11 +232,6 @@ export default function GeneratePage() {
 
   async function generate() {
     if (!setup.cuName.trim()) { setError('Credit Union name is required'); return; }
-    const totalBytes = (msaFile?.size || 0) + additionalDocs.reduce((sum, d) => sum + d.size, 0);
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      setError(`Total upload size (${(totalBytes/1024/1024).toFixed(1)}MB) exceeds the 3.8MB limit Vercel enforces on requests. Remove a document or use a smaller MSA file, then try again.`);
-      return;
-    }
     setLoading(true); setError(''); setResult(null);
     try {
       const fd = new FormData();

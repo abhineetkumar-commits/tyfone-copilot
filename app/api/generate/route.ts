@@ -7,6 +7,7 @@ import { DriveFile } from '@/types';
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
   const elapsed = () => `${Date.now() - t0}ms`;
+  console.log(`[generate] POST handler entered @ ${elapsed()}, content-length=${req.headers.get('content-length')}`);
   // Internal soft-timeout: Vercel Hobby kills the function at 60s and returns
   // a non-JSON error page. We race against a slightly shorter limit so we can
   // return a clean JSON error to the client instead.
