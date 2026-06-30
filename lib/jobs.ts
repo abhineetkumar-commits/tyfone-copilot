@@ -28,7 +28,7 @@ export interface GenerationJob {
 }
 
 const JOB_PREFIX = 'tyfone:job:';
-const JOB_TTL_SECONDS = 60 * 30; // jobs expire after 30 minutes
+const JOB_TTL_SECONDS = 60 * 30;
 
 function jobKey(id: string) { return `${JOB_PREFIX}${id}`; }
 
