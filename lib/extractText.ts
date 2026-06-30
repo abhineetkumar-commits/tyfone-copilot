@@ -1,13 +1,19 @@
-import { PDFParse } from 'pdf-parse';
+import { extractText as unpdfExtractText, getDocumentProxy } from 'unpdf';
 
 const MAX_CHARS = 150000;
 
 /**
  * Extract plain text from an uploaded File (PDF, DOCX, or plain text).
- * Uses pdf-parse (wraps pdfjs-dist) for reliable, fast PDF parsing — the
- * previous regex-based PDF extractor could pathologically hang on certain
- * PDF structures, which was the root cause of generate requests timing out
- * with zero progress logged.
+ *
+ * Uses `unpdf` for PDF parsing — it bundles pdfjs-dist into a single
+ * self-contained file with no separate worker script, which is required
+ * for serverless platforms like Vercel. The previous attempt with
+ * `pdf-parse` (which spawns a pdf.worker.mjs file at runtime) failed in
+ * production because Vercel's file tracer doesn't include that worker
+ * script in the deployed function bundle, causing a 500 error. Before
+ * that, a hand-written regex PDF parser could hang indefinitely on
+ * certain PDF structures (catastrophic backtracking), which caused the
+ * original timeout issue.
  */
 export async function extractText(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
@@ -16,14 +22,16 @@ export async function extractText(file: File): Promise<string> {
   // PDF (magic bytes %PDF)
   if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
     try {
-      const parser = new PDFParse({ data: Buffer.from(buf) });
-      const result = await Promise.race([
-        parser.getText(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF parse timeout')), 20000)),
+      const pdf = await Promise.race([
+        getDocumentProxy(bytes),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF load timeout')), 15000)),
       ]);
-      await parser.destroy().catch(() => {});
-      const text = (result.text || '').trim();
-      if (text.length > 50) return text.substring(0, MAX_CHARS);
+      const { text } = await Promise.race([
+        unpdfExtractText(pdf, { mergePages: true }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF parse timeout')), 15000)),
+      ]);
+      const trimmed = (text || '').trim();
+      if (trimmed.length > 50) return trimmed.substring(0, MAX_CHARS);
     } catch (e) {
       console.warn('[extractText] PDF parse failed, falling back to raw scan:', e);
     }
