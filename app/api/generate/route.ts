@@ -64,8 +64,14 @@ export async function POST(req: NextRequest) {
     ].filter(Boolean).join('\n');
 
     const result: Record<string,unknown> = {};
-    if (outputType==='playbook'||outputType==='both') result.playbook = await generatePlaybook(cuName, driveFiles, msaContent, enriched||undefined);
-    if (outputType==='checklist'||outputType==='both') result.checklist = await generateChecklist(cuName, driveFiles, msaContent, enriched||undefined);
+    const wantPlaybook = outputType==='playbook'||outputType==='both';
+    const wantChecklist = outputType==='checklist'||outputType==='both';
+    const [playbookResult, checklistResult] = await Promise.all([
+      wantPlaybook ? generatePlaybook(cuName, driveFiles, msaContent, enriched||undefined) : Promise.resolve(undefined),
+      wantChecklist ? generateChecklist(cuName, driveFiles, msaContent, enriched||undefined) : Promise.resolve(undefined),
+    ]);
+    if (playbookResult) result.playbook = playbookResult;
+    if (checklistResult) result.checklist = checklistResult;
     result.driveFileCount = driveFiles.length;
     result.hasMSA = !!msaContent;
     result.meta = meta;

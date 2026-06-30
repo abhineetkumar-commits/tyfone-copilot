@@ -246,7 +246,16 @@ export default function GeneratePage() {
       }
       fd.append('additionalDocCount', String(additionalDocs.length));
       const res = await fetch('/api/generate', { method: 'POST', body: fd });
-      const data = await res.json();
+      let data: { error?: string; playbook?: PlaybookData; checklist?: ChecklistData; driveFileCount?: number; hasMSA?: boolean };
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.status === 504 || res.status === 408
+            ? 'Generation timed out — try generating Playbook or Checklist separately instead of Both, or reduce additional documents.'
+            : `Server error (${res.status}). Please try again in a moment.`
+        );
+      }
       if (!res.ok) throw new Error(data.error || 'Generation failed');
       setResult(data);
       setActiveTab(data.playbook ? 'playbook' : 'checklist');
