@@ -71,6 +71,7 @@ ${additionalContext ? `\n=== ADDITIONAL REFERENCE DOCUMENTS ===\n${additionalCon
 // ── Playbook generation — matches master template structure exactly ──────────
 export async function generatePlaybook(cuName: string, files: (DriveFile & { content?: string })[], msa?: string, extra?: string): Promise<PlaybookData> {
   const c = client();
+  const __t0 = Date.now();
   const r = await c.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: 8000,
     system: `You are a senior Tyfone Delivery Manager creating a Go-Live Playbook for ${cuName} on the nFinia platform. Use ONLY the provided MSA and reference documents to ground specifics (dates, vendor names, integrations). CRITICAL: Return ONLY valid complete JSON. No markdown, no commentary.`,
@@ -120,6 +121,7 @@ CRITICAL REQUIREMENTS:
 - Phase 2 must contain one sign-off task per integration mentioned in the context — do not invent integrations not mentioned, but do not skip any either.
 - 5-10 tasks per phase except Phase 2 which should match the integration count + 1.` }],
   });
+  console.log(`[claude] generatePlaybook API call took ${Date.now() - __t0}ms`);
   return parseJ<PlaybookData>(r.content.filter(b => b.type === 'text').map(b => b.text).join(''), 'playbook');
 }
 
@@ -152,6 +154,7 @@ Generate 8-12 risks covering: data migration failures, vendor delays, integratio
 
 export async function generateChecklist(cuName: string, files: (DriveFile & { content?: string })[], msa?: string, extra?: string): Promise<ChecklistData> {
   const c = client();
+  const __t0 = Date.now();
   const r = await c.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: 8000,
     system: `You are a senior Tyfone Delivery Manager creating a Pre Go-Live Discovery Questionnaire for ${cuName}. CRITICAL: Return ONLY valid complete JSON. No markdown.`,
@@ -169,6 +172,7 @@ For "THIRD-PARTY INTEGRATIONS" category: include one specific question per integ
 
 Each item is a QUESTION the Tyfone delivery team asks the CU before go-live — not a checklist task. Write in second person addressing the CU's situation. 3-6 questions per category, ~40 total. Priority should be "Critical" for blocking items (go-live date, core credentials, data migration ownership, DNS/SSL ownership, sign-off authority) and "High" for important-but-not-blocking items (app store content, training, communications).` }],
   });
+  console.log(`[claude] generateChecklist API call took ${Date.now() - __t0}ms`);
   return parseJ<ChecklistData>(r.content.filter(b => b.type === 'text').map(b => b.text).join(''), 'checklist');
 }
 
