@@ -33,10 +33,12 @@ export async function POST(req: NextRequest) {
     // triggering background work that should outlive the request/response
     // cycle of the function handling the client's request.
     after(async () => {
+      console.log(`[generate/start] after() callback firing for job ${id}, dispatching to ${processUrl}`);
       try {
-        await fetch(processUrl, { method: 'POST', body: forwardFd });
+        const r = await fetch(processUrl, { method: 'POST', body: forwardFd });
+        console.log(`[generate/start] process route responded with status ${r.status} for job ${id}`);
       } catch (err) {
-        console.error('[generate/start] failed to trigger background processing:', err);
+        console.error(`[generate/start] failed to trigger background processing for job ${id}:`, err);
       }
     });
 

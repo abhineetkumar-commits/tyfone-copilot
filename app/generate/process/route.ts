@@ -8,15 +8,16 @@ import { DriveFile } from '@/types';
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
   const elapsed = () => `${Date.now() - t0}ms`;
-
-  const fd = await req.formData();
-  const jobId = fd.get('jobId') as string;
-  if (!jobId) return NextResponse.json({ error: 'Missing jobId' }, { status: 400 });
-
-  console.log(`[process:${jobId}] started @ ${elapsed()}`);
-  await updateJob(jobId, { status: 'running', progress: 'Reading documents…' });
+  let jobId = 'unknown';
 
   try {
+    const fd = await req.formData();
+    jobId = (fd.get('jobId') as string) || 'unknown';
+    if (jobId === 'unknown') return NextResponse.json({ error: 'Missing jobId' }, { status: 400 });
+
+    console.log(`[process:${jobId}] started @ ${elapsed()}`);
+    await updateJob(jobId, { status: 'running', progress: 'Reading documents…' });
+
     const cuName = fd.get('creditUnionName') as string;
     const outputType = fd.get('outputType') as 'playbook'|'checklist'|'both';
     if (!cuName?.trim()) throw new Error('Credit Union name required');
@@ -92,7 +93,11 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[process:${jobId}] error @ ${elapsed()}:`, e);
-    await updateJob(jobId, { status: 'error', error: msg });
+    try {
+      await updateJob(jobId, { status: 'error', error: msg });
+    } catch (updateErr) {
+      console.error(`[process:${jobId}] also failed to write error status:`, updateErr);
+    }
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
