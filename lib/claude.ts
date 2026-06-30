@@ -10,8 +10,12 @@ function client() {
 
 function ctx(files: (DriveFile & { content?: string })[], msa?: string): string {
   const p: string[] = [];
-  if (msa) p.push(`=== MASTER SERVICE AGREEMENT ===\n${msa.substring(0, 80000)}`);
-  if (files.length) { p.push('\n=== DRIVE DOCUMENTS ==='); for (const f of files) if (f.content) p.push(`\n--- ${f.name} ---\n${f.content.substring(0, 12000)}`); }
+  if (msa) p.push(`=== MASTER SERVICE AGREEMENT ===\n${msa.substring(0, 60000)}`);
+  if (files.length) {
+    p.push('\n=== DRIVE DOCUMENTS (most relevant, capped) ===');
+    // Cap to the 6 most relevant files and a smaller per-file slice to keep prompts fast.
+    for (const f of files.slice(0, 6)) if (f.content) p.push(`\n--- ${f.name} ---\n${f.content.substring(0, 6000)}`);
+  }
   return p.join('\n\n');
 }
 
@@ -68,11 +72,11 @@ ${additionalContext ? `\n=== ADDITIONAL REFERENCE DOCUMENTS ===\n${additionalCon
 export async function generatePlaybook(cuName: string, files: (DriveFile & { content?: string })[], msa?: string, extra?: string): Promise<PlaybookData> {
   const c = client();
   const r = await c.messages.create({
-    model: 'claude-opus-4-6', max_tokens: 16000,
+    model: 'claude-sonnet-4-6', max_tokens: 8000,
     system: `You are a senior Tyfone Delivery Manager creating a Go-Live Playbook for ${cuName} on the nFinia platform. Use ONLY the provided MSA and reference documents to ground specifics (dates, vendor names, integrations). CRITICAL: Return ONLY valid complete JSON. No markdown, no commentary.`,
     messages: [{ role: 'user', content: `Generate a Go-Live Playbook for ${cuName}.
 ${extra ? `Context: ${extra}\n` : ''}
-${ctx(files, msa).substring(0, 70000)}
+${ctx(files, msa).substring(0, 35000)}
 
 Return this exact JSON shape:
 {
@@ -149,11 +153,11 @@ Generate 8-12 risks covering: data migration failures, vendor delays, integratio
 export async function generateChecklist(cuName: string, files: (DriveFile & { content?: string })[], msa?: string, extra?: string): Promise<ChecklistData> {
   const c = client();
   const r = await c.messages.create({
-    model: 'claude-opus-4-6', max_tokens: 16000,
+    model: 'claude-sonnet-4-6', max_tokens: 8000,
     system: `You are a senior Tyfone Delivery Manager creating a Pre Go-Live Discovery Questionnaire for ${cuName}. CRITICAL: Return ONLY valid complete JSON. No markdown.`,
     messages: [{ role: 'user', content: `Generate a Pre Go-Live Discovery Questionnaire for ${cuName}.
 ${extra ? `Context: ${extra}\n` : ''}
-${ctx(files, msa).substring(0, 70000)}
+${ctx(files, msa).substring(0, 35000)}
 
 Return this exact JSON:
 {"creditUnion":"${cuName}","summary":"2-3 sentence summary","items":[{"category":"Category","item":"A direct QUESTION to ask the CU, phrased professionally, max 200 chars","owner":"CU","dueDate":"","status":"Not Started","priority":"Critical or High or Medium or Low","notes":""}]}
