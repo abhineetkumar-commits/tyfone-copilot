@@ -25,8 +25,15 @@ export async function POST(req: NextRequest) {
       forwardFd.append(key, value);
     }
 
-    const origin = req.nextUrl.origin;
-    const processUrl = `${origin}/api/generate/process`;
+    // req.nextUrl.origin can resolve to an internal/non-routable hostname
+    // inside Vercel's serverless environment. Use the public deployment URL
+    // (VERCEL_URL is auto-set by Vercel) as the reliable source of truth,
+    // falling back to the request origin for local dev.
+    const publicOrigin = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : req.nextUrl.origin;
+    const processUrl = `${publicOrigin}/api/generate/process`;
+    console.log(`[generate/start] resolved processUrl: ${processUrl} (VERCEL_URL=${process.env.VERCEL_URL || 'not set'})`);
 
     // Use after() to guarantee this fetch is dispatched even after we return
     // the response below — this is the documented Next.js pattern for
