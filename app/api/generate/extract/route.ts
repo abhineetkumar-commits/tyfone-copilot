@@ -59,9 +59,22 @@ export async function POST(req: NextRequest) {
   try {
     const fd = await req.formData();
     const msaFile = fd.get('msaFile') as File|null;
-    if (!msaFile) return NextResponse.json({error:'No file'},{status:400});
-    const text = await extractText(msaFile);
-    const meta = await extractMSAMetadata(text);
+
+    let text = '';
+    if (msaFile && msaFile.size > 0) text = await extractText(msaFile);
+
+    // Process any additional reference documents sent alongside the MSA
+    const addCount = parseInt((fd.get('additionalDocCount') as string)||'0', 10);
+    const addTexts: string[] = [];
+    for (let i = 0; i < addCount; i++) {
+      const f = fd.get(`additionalDoc_${i}`) as File|null;
+      if (f && f.size > 0) addTexts.push(`--- ${f.name} ---\n${await extractText(f)}`);
+    }
+    const additionalContext = addTexts.length ? addTexts.join('\n\n') : undefined;
+
+    if (!text && !additionalContext) return NextResponse.json({error:'No documents provided'},{status:400});
+
+    const meta = await extractMSAMetadata(text || '(No MSA uploaded — extract from additional documents only)', additionalContext);
     meta.integrations = normalise(meta.integrations || []);
     return NextResponse.json(meta);
   } catch (e: unknown) {

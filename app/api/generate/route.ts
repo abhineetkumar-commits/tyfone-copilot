@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generatePlaybook, generateChecklist, buildPlaybookExcel, buildChecklistExcel, PlaybookMeta } from '@/lib/claude';
+import { generatePlaybook, generateChecklist, generateRisks, buildPlaybookExcel, buildChecklistExcel, PlaybookMeta, RiskData } from '@/lib/claude';
 import { readAllDriveFiles } from '@/lib/drive';
 import { DriveFile } from '@/types';
 
@@ -80,8 +80,16 @@ export async function PUT(req: NextRequest) {
   try {
     const { type, data, prereqs } = await req.json();
     const meta: PlaybookMeta = prereqs || {};
-    const buffer = type === 'playbook' ? buildPlaybookExcel(data, meta) : type === 'checklist' ? buildChecklistExcel(data, meta) : null;
-    if (!buffer) return NextResponse.json({error:'Invalid type'},{status:400});
+    let buffer: Buffer;
+    if (type === 'playbook') {
+      let riskData: RiskData | undefined;
+      try { riskData = await generateRisks(data.creditUnion, data, undefined); } catch (e) { console.warn('Risk generation failed:', e); }
+      buffer = await buildPlaybookExcel(data, meta, riskData);
+    } else if (type === 'checklist') {
+      buffer = await buildChecklistExcel(data, meta);
+    } else {
+      return NextResponse.json({error:'Invalid type'},{status:400});
+    }
     const filename = `${type==='playbook'?'GoLivePlaybook':'PreGoLive_Questionnaire'}_${data.creditUnion.replace(/\s+/g,'_')}.xlsx`;
     return new NextResponse(buffer as unknown as BodyInit, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${filename}"` } });
   } catch (e: unknown) { return NextResponse.json({error: e instanceof Error ? e.message : String(e)},{status:500}); }

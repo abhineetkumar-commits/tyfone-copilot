@@ -5,6 +5,7 @@ export interface DriveFile {
 export interface PlaybookSection { title: string; phase: string; tasks: PlaybookTask[]; }
 export interface PlaybookTask {
   task: string; owner: string; timeline: string;
+  startTime?: string; endTime?: string;
   dependencies: string; status: string; notes: string;
 }
 export interface PlaybookData {

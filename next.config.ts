@@ -1,6 +1,6 @@
 import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['googleapis', '@anthropic-ai/sdk'],
+  serverExternalPackages: ['googleapis', '@anthropic-ai/sdk', 'exceljs'],
   images: {
     remotePatterns: [{ protocol: 'https', hostname: 'lh3.googleusercontent.com' }],
   },

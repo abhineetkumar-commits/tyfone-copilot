@@ -157,6 +157,7 @@ export default function GeneratePage() {
   const addDocsRef = useRef<HTMLInputElement>(null);
   const [extracting, setExtracting] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ playbook?: PlaybookData; checklist?: ChecklistData; driveFileCount?: number; hasMSA?: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('playbook');
@@ -166,12 +167,14 @@ export default function GeneratePage() {
     setSetup(p => ({ ...p, [k]: v }));
   }
 
-  async function handleMSA(file: File) {
-    setMsaFile(file);
+  async function runExtraction(currentMsaFile: File | null, currentAddDocs: AdditionalDoc[]) {
+    if (!currentMsaFile && currentAddDocs.length === 0) return;
     setExtracting(true);
     try {
       const fd = new FormData();
-      fd.append('msaFile', file);
+      if (currentMsaFile) fd.append('msaFile', currentMsaFile);
+      currentAddDocs.forEach((d, i) => fd.append(`additionalDoc_${i}`, d.file));
+      fd.append('additionalDocCount', String(currentAddDocs.length));
       const res = await fetch('/api/generate/extract', { method: 'POST', body: fd });
       if (res.ok) {
         const d = await res.json();
@@ -182,18 +185,25 @@ export default function GeneratePage() {
           timezone: d.timezone || p.timezone,
           coreSystem: d.coreSystem || p.coreSystem,
           outgoingVendor: d.outgoingVendor || p.outgoingVendor,
-          integrations: d.integrations?.length ? d.integrations : p.integrations,
+          // Merge newly detected integrations with any already present (manual or prior extraction), de-duplicated
+          integrations: Array.from(new Set([...(p.integrations || []), ...(d.integrations || [])])),
         }));
       }
     } catch {}
     setExtracting(false);
   }
 
+  async function handleMSA(file: File) {
+    setMsaFile(file);
+    await runExtraction(file, additionalDocs);
+  }
+
   async function handleAdditionalDocs(files: FileList | null) {
     if (!files) return;
-    for (const file of Array.from(files)) {
-      setAdditionalDocs(p => [...p, { file, name: file.name, size: file.size }]);
-    }
+    const newDocs: AdditionalDoc[] = Array.from(files).map(file => ({ file, name: file.name, size: file.size }));
+    const merged = [...additionalDocs, ...newDocs];
+    setAdditionalDocs(merged);
+    await runExtraction(msaFile, merged);
   }
 
   function removeAdditionalDoc(idx: number) {
@@ -250,19 +260,24 @@ export default function GeneratePage() {
     if (!result) return;
     const data = type === 'playbook' ? result.playbook : result.checklist;
     if (!data) return;
-    const res = await fetch('/api/generate', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, data, prereqs: setup }),
-    });
-    if (!res.ok) { alert('Export failed'); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${type === 'playbook' ? 'GoLivePlaybook' : 'PreGoLive_Questionnaire'}_${setup.cuName.replace(/\s+/g, '_')}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
+    setExporting(true);
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, data, prereqs: setup }),
+      });
+      if (!res.ok) { alert('Export failed'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${type === 'playbook' ? 'GoLivePlaybook' : 'PreGoLive_Questionnaire'}_${setup.cuName.replace(/\s+/g, '_')}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
   }
 
   if (!mounted) return null;
@@ -353,7 +368,7 @@ export default function GeneratePage() {
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
                     📁 Additional Reference Documents
-                    <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>(optional)</span>
+                    <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>(optional — also scanned for vendors)</span>
                   </div>
                   <div onClick={() => addDocsRef.current?.click()}
                     style={{ border: '2px dashed #e2e8f0', borderRadius: 10, padding: '12px 14px', cursor: 'pointer', background: '#fafafa', transition: 'all 0.15s', minHeight: 72, display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 4 }}
@@ -528,13 +543,13 @@ export default function GeneratePage() {
                   )}
                 </div>
                 {msaFile && setup.integrations.length === 0 && (
-                  <span style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>Upload MSA above to auto-detect</span>
+                  <span style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>Upload MSA or reference docs above to auto-detect</span>
                 )}
               </div>
               <p style={{ fontSize: 12, color: '#64748b', margin: '0 0 12px' }}>
                 {msaFile
                   ? 'Auto-detected from your MSA — remove any that do not apply or add missing ones'
-                  : 'These are used to build Phase 2 sign-offs and the Validation Checklist — upload MSA to auto-detect, or add manually'}
+                  : 'These are used to build Phase 2 sign-offs and the Validation Checklist — upload MSA or reference docs to auto-detect, or add manually'}
               </p>
 
               {/* Auto-detected chips */}
@@ -601,8 +616,8 @@ export default function GeneratePage() {
                     </div>
                   )}
                 </div>
-                <button onClick={addCustomInt}
-                  style={{ padding: '9px 14px', background: '#0f2540', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+                <button onClick={addCustomInt} disabled={!setup.customInt.trim()}
+                  style={{ padding: '9px 14px', background: setup.customInt.trim() ? '#0f2540' : '#e2e8f0', color: setup.customInt.trim() ? '#fff' : '#94a3b8', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: setup.customInt.trim() ? 'pointer' : 'not-allowed', flexShrink: 0, transition: 'all 0.15s' }}>
                   + Add
                 </button>
               </div>
@@ -699,10 +714,19 @@ export default function GeneratePage() {
                 )}
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-                  <button onClick={() => exportDoc(activeTab)} className="exp-btn"
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#16a34a', color: '#fff', padding: '9px 18px', borderRadius: 9, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', boxShadow: '0 2px 6px rgba(22,163,74,0.2)', transition: 'all 0.2s' }}>
-                    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    Export Excel
+                  <button onClick={() => exportDoc(activeTab)} disabled={exporting} className="exp-btn"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, background: exporting ? '#94a3b8' : '#16a34a', color: '#fff', padding: '9px 18px', borderRadius: 9, fontSize: 13, fontWeight: 600, border: 'none', cursor: exporting ? 'not-allowed' : 'pointer', boxShadow: '0 2px 6px rgba(22,163,74,0.2)', transition: 'all 0.2s' }}>
+                    {exporting ? (
+                      <>
+                        <div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+                        {activeTab === 'playbook' ? 'Building risks & formatting…' : 'Formatting…'}
+                      </>
+                    ) : (
+                      <>
+                        <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                        Export Excel
+                      </>
+                    )}
                   </button>
                 </div>
 
