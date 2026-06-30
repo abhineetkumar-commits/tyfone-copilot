@@ -79,9 +79,15 @@ export async function readDriveFile(fileId: string, mimeType: string, fileName =
   return `[${mimeType}: ${fileName}]`;
 }
 
-export async function readAllDriveFiles(folderId?: string): Promise<(DriveFile & { content?: string })[]> {
+export async function readAllDriveFiles(folderId?: string, maxFiles = 6): Promise<(DriveFile & { content?: string })[]> {
   const files = await listDriveFiles(folderId);
-  const results = await Promise.allSettled(files.map(async f => {
+  // Only download/parse content for the most recently modified files, capped.
+  // Downloading every file in the Drive folder on every request is what was
+  // causing generation requests to exceed the serverless function timeout.
+  const candidates = [...files]
+    .sort((a, b) => (b.modifiedTime || '').localeCompare(a.modifiedTime || ''))
+    .slice(0, maxFiles);
+  const results = await Promise.allSettled(candidates.map(async f => {
     try { return { ...f, content: await readDriveFile(f.id, f.mimeType, f.name) }; }
     catch { return { ...f, content: `[Failed: ${f.name}]` }; }
   }));

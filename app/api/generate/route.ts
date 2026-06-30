@@ -50,7 +50,17 @@ export async function POST(req: NextRequest) {
     }
 
     let driveFiles: (DriveFile & {content?:string})[] = [];
-    try { driveFiles = await readAllDriveFiles(); } catch(e){ console.warn('Drive unavailable:', e); }
+    // Only consult Drive when no MSA was uploaded — if the user provided an
+    // MSA directly, it's the authoritative source and Drive lookup just adds
+    // latency (and was a major contributor to serverless function timeouts).
+    if (!msaContent) {
+      try {
+        driveFiles = await Promise.race([
+          readAllDriveFiles(),
+          new Promise<(DriveFile & {content?:string})[]>((_, reject) => setTimeout(() => reject(new Error('Drive timeout')), 15000)),
+        ]);
+      } catch(e){ console.warn('Drive unavailable or too slow:', e); }
+    }
 
     const enriched = [
       meta.goLiveDate    ? `Go-Live Date: ${meta.goLiveDate}` : '',
