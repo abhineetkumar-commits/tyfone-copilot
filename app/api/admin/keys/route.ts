@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { isUserAdmin } from '@/lib/users';
 function mask(v?: string, n = 4) { if (!v) return 'Not configured'; return v.length <= n ? '••••' : `••••${v.slice(-n)}`; }
-export async function GET() {
+async function requireAdmin() {
   const session = await getServerSession();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.email) return false;
+  return isUserAdmin(session.user.email);
+}
+export async function GET() {
+  if (!(await requireAdmin())) return NextResponse.json({ error: 'Unauthorized — admin access required' }, { status: 403 });
   const keys = [
     { id: 'anthropic', name: 'ANTHROPIC_API_KEY', service: 'anthropic', keyPreview: process.env.ANTHROPIC_API_KEY ? `sk-ant-...${mask(process.env.ANTHROPIC_API_KEY)}` : 'Not configured', status: process.env.ANTHROPIC_API_KEY ? 'active' : 'inactive', createdAt: 'env' },
     { id: 'sa_email', name: 'GOOGLE_SERVICE_ACCOUNT_EMAIL', service: 'google_drive', keyPreview: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'Not configured', status: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'active' : 'inactive', createdAt: 'env' },
@@ -15,8 +20,7 @@ export async function GET() {
   return NextResponse.json({ keys });
 }
 export async function POST(req: NextRequest) {
-  const session = await getServerSession();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!(await requireAdmin())) return NextResponse.json({ error: 'Unauthorized — admin access required' }, { status: 403 });
   const { action } = await req.json();
   if (action === 'test_anthropic') {
     try {

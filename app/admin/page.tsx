@@ -11,11 +11,75 @@ interface KeyStatus {
   createdAt: string;
 }
 
+interface AllowedUser {
+  email: string;
+  name?: string;
+  role: 'admin' | 'member';
+  status: 'active' | 'blocked';
+  addedBy: string;
+  addedAt: string;
+  lastLoginAt?: string;
+}
+
 export default function AdminPage() {
   const { data: session, status } = useSession();
   const [keys, setKeys] = useState<KeyStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const [testResult, setTestResult] = useState<{ service: string; success: boolean; message: string } | null>(null);
+
+  const [users, setUsers] = useState<AllowedUser[]>([]);
+  const [usersError, setUsersError] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newRole, setNewRole] = useState<'admin' | 'member'>('member');
+  const [userActionLoading, setUserActionLoading] = useState('');
+
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  const fetchUsers = useCallback(async () => {
+    setUsersError('');
+    const res = await fetch('/api/admin/users');
+    const data = await res.json();
+    if (res.ok) { setUsers(data.users); setIsAdmin(true); }
+    else { setIsAdmin(false); setUsersError(data.error || 'Failed to load users'); }
+  }, []);
+
+  async function handleAddUser() {
+    const email = newEmail.trim();
+    if (!email || !email.includes('@')) { setUsersError('Enter a valid email address'); return; }
+    setUserActionLoading('add');
+    setUsersError('');
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', email, role: newRole }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setNewEmail('');
+      await fetchUsers();
+    } catch (e: unknown) {
+      setUsersError(e instanceof Error ? e.message : 'Failed to add user');
+    }
+    setUserActionLoading('');
+  }
+
+  async function handleUserAction(action: 'block' | 'unblock' | 'remove' | 'setRole', email: string, role?: 'admin' | 'member') {
+    if (action === 'remove' && !confirm(`Remove ${email}? They will lose all access immediately.`)) return;
+    setUserActionLoading(email + action);
+    setUsersError('');
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, email, role }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      await fetchUsers();
+    } catch (e: unknown) {
+      setUsersError(e instanceof Error ? e.message : 'Action failed');
+    }
+    setUserActionLoading('');
+  }
 
   const fetchKeys = useCallback(async () => {
     const res = await fetch('/api/admin/keys');
@@ -26,8 +90,8 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (status === 'authenticated') fetchKeys();
-  }, [status, fetchKeys]);
+    if (status === 'authenticated') { fetchKeys(); fetchUsers(); }
+  }, [status, fetchKeys, fetchUsers]);
 
   async function handleTest(action: string, label: string) {
     setLoading(true);
@@ -71,6 +135,33 @@ export default function AdminPage() {
     );
   }
 
+  if (isAdmin === null) {
+    return (
+      <div style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={spin} />
+      </div>
+    );
+  }
+
+  if (isAdmin === false) {
+    return (
+      <div style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={card}>
+          <div style={lockIcon}>
+            <svg width="28" height="28" fill="none" stroke="#dc2626" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+          </div>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: '#0f2540', margin: '0 0 6px' }}>Admin Access Only</h1>
+          <p style={{ color: '#64748b', fontSize: 14, margin: 0 }}>
+            <strong style={{ color: '#1e293b' }}>{session?.user?.email}</strong> doesn&apos;t have admin permissions.<br/>
+            Ask an existing admin to grant you access.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const activeCount = keys.filter(k => k.status === 'active').length;
 
   return (
@@ -93,6 +184,115 @@ export default function AdminPage() {
             <p style={{ color: '#64748b', fontSize: 14, margin: 0 }}>
               Signed in as <strong style={{ color: '#1e293b' }}>{session?.user?.email}</strong>
             </p>
+          </div>
+        </div>
+
+        {/* User Access Management */}
+        <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e2e8f0', overflow: 'hidden', marginBottom: 32, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+          <div style={{ padding: '16px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <svg width="16" height="16" fill="none" stroke="#0f2540" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 100-8 4 4 0 000 8zm6 3c0 2.21-3.582 4-8 4s-8-1.79-8-4 3.582-4 8-4 8 1.79 8 4z" /></svg>
+              <span style={{ fontWeight: 600, fontSize: 15, color: '#1e293b' }}>User Access</span>
+              <span style={{ fontSize: 12, color: '#94a3b8', background: '#f1f5f9', padding: '2px 9px', borderRadius: 20, fontWeight: 600 }}>{users.length}</span>
+            </div>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>Who can sign in to Tyfone Copilot</span>
+          </div>
+
+          <div style={{ padding: '16px 24px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)}
+              placeholder="name@company.com" onKeyDown={e => e.key === 'Enter' && handleAddUser()}
+              style={{ flex: '1 1 240px', padding: '9px 12px', border: '1.5px solid #e2e8f0', borderRadius: 9, fontSize: 13, color: '#1e293b', outline: 'none' }}
+            />
+            <select value={newRole} onChange={e => setNewRole(e.target.value as 'admin' | 'member')}
+              style={{ padding: '9px 12px', border: '1.5px solid #e2e8f0', borderRadius: 9, fontSize: 13, color: '#1e293b', background: '#fff', cursor: 'pointer' }}>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button onClick={handleAddUser} disabled={userActionLoading === 'add'}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0f2540', color: '#fff', padding: '9px 18px', borderRadius: 9, fontSize: 13, fontWeight: 600, border: 'none', cursor: userActionLoading === 'add' ? 'not-allowed' : 'pointer', opacity: userActionLoading === 'add' ? 0.6 : 1 }}>
+              {userActionLoading === 'add' ? 'Adding…' : '+ Grant Access'}
+            </button>
+          </div>
+
+          {usersError && (
+            <div style={{ padding: '10px 24px', background: '#fef2f2', color: '#b91c1c', fontSize: 13, borderBottom: '1px solid #fecaca' }}>
+              {usersError}
+            </div>
+          )}
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc' }}>
+                  {['User', 'Role', 'Status', 'Last Login', 'Added', ''].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 24px', color: '#64748b', fontWeight: 600, fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {users.length === 0 ? (
+                  <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>No users configured yet</td></tr>
+                ) : users.map(u => {
+                  const isSelf = u.email.toLowerCase() === session?.user?.email?.toLowerCase();
+                  const busy = userActionLoading.startsWith(u.email);
+                  return (
+                    <tr key={u.email} style={{ borderTop: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '14px 24px' }}>
+                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{u.name || u.email}</div>
+                        {u.name && <div style={{ fontSize: 11.5, color: '#94a3b8' }}>{u.email}</div>}
+                        {isSelf && <span style={{ fontSize: 10.5, color: '#4A9FD4', fontWeight: 600 }}>(you)</span>}
+                      </td>
+                      <td style={{ padding: '14px 24px' }}>
+                        <select
+                          value={u.role} disabled={busy}
+                          onChange={e => handleUserAction('setRole', u.email, e.target.value as 'admin' | 'member')}
+                          style={{
+                            padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, border: 'none', cursor: busy ? 'not-allowed' : 'pointer',
+                            background: u.role === 'admin' ? '#f3e8ff' : '#f1f5f9', color: u.role === 'admin' ? '#7c3aed' : '#475569',
+                          }}>
+                          <option value="member">Member</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </td>
+                      <td style={{ padding: '14px 24px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: u.status === 'active' ? '#16a34a' : '#dc2626', fontWeight: 500 }}>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: u.status === 'active' ? '#22c55e' : '#f87171', display: 'inline-block' }} />
+                          {u.status === 'active' ? 'Active' : 'Blocked'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '14px 24px', color: '#64748b', fontSize: 12 }}>
+                        {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      </td>
+                      <td style={{ padding: '14px 24px', color: '#94a3b8', fontSize: 12 }}>
+                        {new Date(u.addedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td style={{ padding: '14px 24px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                          {u.status === 'active' ? (
+                            <button onClick={() => handleUserAction('block', u.email)} disabled={busy || isSelf}
+                              title={isSelf ? "Can't block yourself" : 'Block this user'}
+                              style={{ padding: '5px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, border: '1px solid #fecaca', background: '#fff', color: '#dc2626', cursor: (busy || isSelf) ? 'not-allowed' : 'pointer', opacity: (busy || isSelf) ? 0.4 : 1 }}>
+                              Block
+                            </button>
+                          ) : (
+                            <button onClick={() => handleUserAction('unblock', u.email)} disabled={busy}
+                              style={{ padding: '5px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, border: '1px solid #bbf7d0', background: '#fff', color: '#16a34a', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.4 : 1 }}>
+                              Unblock
+                            </button>
+                          )}
+                          <button onClick={() => handleUserAction('remove', u.email)} disabled={busy || isSelf}
+                            title={isSelf ? "Can't remove yourself" : 'Remove this user'}
+                            style={{ padding: '5px 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, border: '1px solid #e2e8f0', background: '#fff', color: '#94a3b8', cursor: (busy || isSelf) ? 'not-allowed' : 'pointer', opacity: (busy || isSelf) ? 0.4 : 1 }}>
+                            ✕
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
 
