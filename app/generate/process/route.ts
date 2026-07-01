@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Receiver } from '@upstash/qstash';
 import { generatePlaybook, generateChecklist, PlaybookMeta } from '@/lib/claude';
 import { readAllDriveFiles } from '@/lib/drive';
 import { extractText } from '@/lib/extractText';
 import { updateJob } from '@/lib/jobs';
 import { DriveFile } from '@/types';
+
+interface FileField { field: string; name: string; content: string }
+
+function base64ToFile(name: string, base64: string): File {
+  const buf = Buffer.from(base64, 'base64');
+  return new File([buf], name);
+}
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
@@ -11,36 +19,56 @@ export async function POST(req: NextRequest) {
   let jobId = 'unknown';
 
   try {
-    const fd = await req.formData();
-    jobId = (fd.get('jobId') as string) || 'unknown';
+    const rawBody = await req.text();
+
+    // Verify the request genuinely came from QStash (not a spoofed call).
+    // Skipped automatically if signing keys aren't set, e.g. local dev.
+    const signingKey = process.env.QSTASH_CURRENT_SIGNING_KEY;
+    const nextSigningKey = process.env.QSTASH_NEXT_SIGNING_KEY;
+    if (signingKey && nextSigningKey) {
+      const receiver = new Receiver({ currentSigningKey: signingKey, nextSigningKey });
+      const signature = req.headers.get('upstash-signature') || '';
+      const valid = await receiver.verify({ signature, body: rawBody }).catch(() => false);
+      if (!valid) {
+        console.error('[process] QStash signature verification failed — rejecting request');
+        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+      }
+    }
+
+    const payload = JSON.parse(rawBody) as Record<string, string>;
+    jobId = payload.jobId || 'unknown';
     if (jobId === 'unknown') return NextResponse.json({ error: 'Missing jobId' }, { status: 400 });
 
     console.log(`[process:${jobId}] started @ ${elapsed()}`);
     await updateJob(jobId, { status: 'running', progress: 'Reading documents…' });
 
-    const cuName = fd.get('creditUnionName') as string;
-    const outputType = fd.get('outputType') as 'playbook'|'checklist'|'both';
+    const fileFields: FileField[] = JSON.parse(payload.__files || '[]');
+    const filesByField: Record<string, File> = {};
+    for (const f of fileFields) filesByField[f.field] = base64ToFile(f.name, f.content);
+
+    const cuName = payload.creditUnionName;
+    const outputType = payload.outputType as 'playbook'|'checklist'|'both';
     if (!cuName?.trim()) throw new Error('Credit Union name required');
     if (!outputType) throw new Error('Output type required');
 
     const meta: PlaybookMeta = {
-      goLiveDate:    (fd.get('goLiveDate')     as string)||undefined,
-      goLiveTime:    (fd.get('goLiveTime')     as string)||undefined,
-      timezone:      (fd.get('timezone')       as string)||undefined,
-      coreSystem:    (fd.get('coreSystem')     as string)||undefined,
-      outgoingVendor:(fd.get('outgoingVendor') as string)||undefined,
-      integrations:  (() => { try { return JSON.parse(fd.get('integrations') as string||'[]'); } catch { return []; } })(),
+      goLiveDate:    payload.goLiveDate || undefined,
+      goLiveTime:    payload.goLiveTime || undefined,
+      timezone:      payload.timezone || undefined,
+      coreSystem:    payload.coreSystem || undefined,
+      outgoingVendor:payload.outgoingVendor || undefined,
+      integrations:  (() => { try { return JSON.parse(payload.integrations || '[]'); } catch { return []; } })(),
     };
 
-    const msaFile = fd.get('msaFile') as File|null;
+    const msaFile = filesByField['msaFile'];
     let msaContent: string|undefined;
     if (msaFile && msaFile.size > 0) msaContent = await extractText(msaFile);
     console.log(`[process:${jobId}] MSA extracted (${msaContent?.length||0} chars) @ ${elapsed()}`);
 
-    const addCount = parseInt((fd.get('additionalDocCount') as string)||'0', 10);
+    const addCount = parseInt(payload.additionalDocCount || '0', 10);
     const addTexts: string[] = [];
     for (let i = 0; i < addCount; i++) {
-      const f = fd.get(`additionalDoc_${i}`) as File|null;
+      const f = filesByField[`additionalDoc_${i}`];
       if (f && f.size > 0) addTexts.push(`=== ${f.name} ===\n${await extractText(f)}`);
     }
     console.log(`[process:${jobId}] ${addCount} additional docs extracted @ ${elapsed()}`);
@@ -64,7 +92,7 @@ export async function POST(req: NextRequest) {
       meta.coreSystem    ? `Core System: ${meta.coreSystem}` : '',
       meta.outgoingVendor? `Outgoing Vendor: ${meta.outgoingVendor}` : '',
       meta.integrations?.length ? `Integrations: ${meta.integrations.join(', ')}` : '',
-      (fd.get('customPrompt') as string)||'',
+      payload.customPrompt || '',
       addTexts.length ? `\nADDITIONAL DOCUMENTS:\n${addTexts.join('\n\n')}` : '',
     ].filter(Boolean).join('\n');
 

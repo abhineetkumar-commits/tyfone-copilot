@@ -158,6 +158,7 @@ export default function GeneratePage() {
   const [extracting, setExtracting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
+  const [debugInfo, setDebugInfo] = useState('');
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ playbook?: PlaybookData; checklist?: ChecklistData; driveFileCount?: number; hasMSA?: boolean } | null>(null);
@@ -233,7 +234,7 @@ export default function GeneratePage() {
 
   async function generate() {
     if (!setup.cuName.trim()) { setError('Credit Union name is required'); return; }
-    setLoading(true); setError(''); setResult(null); setProgress('Starting…');
+    setLoading(true); setError(''); setResult(null); setProgress('Starting…'); setDebugInfo('');
     try {
       const fd = new FormData();
       fd.append('creditUnionName', setup.cuName);
@@ -256,30 +257,58 @@ export default function GeneratePage() {
       // full timeout budget, so we're never blocked by the 60s serverless
       // function limit, no matter how long full-detail generation takes.
       const startRes = await fetch('/api/generate/start', { method: 'POST', body: fd });
-      const startData = await startRes.json();
+      console.log('[generate] start response status:', startRes.status);
+      let startData: { jobId?: string; error?: string };
+      try {
+        startData = await startRes.json();
+        console.log('[generate] start response body:', startData);
+      } catch (parseErr) {
+        console.error('[generate] failed to parse start response as JSON:', parseErr);
+        throw new Error(`Failed to start generation (server returned ${startRes.status}). The generation service may not be configured correctly — check that Redis is set up.`);
+      }
       if (!startRes.ok) throw new Error(startData.error || 'Failed to start generation');
       const jobId = startData.jobId as string;
+      console.log('[generate] job created with id:', jobId);
 
       // Poll for completion
       const POLL_INTERVAL_MS = 2000;
       const MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes ceiling
       const pollStart = Date.now();
+      let pollCount = 0;
 
       while (true) {
         if (Date.now() - pollStart > MAX_WAIT_MS) {
           throw new Error('Generation is taking unusually long (over 10 minutes). Please try again or contact support.');
         }
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-        const statusRes = await fetch(`/api/generate/status?id=${jobId}`);
+        pollCount++;
+        let statusRes: Response;
+        try {
+          statusRes = await fetch(`/api/generate/status?id=${jobId}`);
+        } catch (fetchErr) {
+          console.error(`[generate] poll #${pollCount} network error:`, fetchErr);
+          continue; // network blip, keep polling
+        }
+        console.log(`[generate] poll #${pollCount} status code:`, statusRes.status);
         if (!statusRes.ok) {
+          setDebugInfo(`Poll #${pollCount}: HTTP ${statusRes.status}`);
           if (statusRes.status === 404) throw new Error('Job expired or not found — please try generating again.');
           continue; // transient error, keep polling
         }
-        const job = await statusRes.json();
+        let job: { progress?: string; status?: string; result?: typeof result; error?: string };
+        try {
+          job = await statusRes.json();
+          console.log(`[generate] poll #${pollCount} job state:`, job);
+          setDebugInfo(`Poll #${pollCount}: status=${job.status || 'unknown'}`);
+        } catch (jsonErr) {
+          console.error(`[generate] poll #${pollCount} failed to parse job JSON:`, jsonErr);
+          setDebugInfo(`Poll #${pollCount}: invalid response from server`);
+          continue; // transient/non-JSON response, keep polling rather than crash
+        }
         if (job.progress) setProgress(job.progress);
 
         if (job.status === 'complete') {
-          setResult(job.result);
+          setResult(job.result || null);
           setActiveTab(job.result?.playbook ? 'playbook' : 'checklist');
           break;
         }
@@ -732,6 +761,7 @@ export default function GeneratePage() {
                 <div style={{ width: 44, height: 44, border: '3px solid #e2e8f0', borderTopColor: '#4A9FD4', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }}/>
                 <div style={{ fontSize: 15, fontWeight: 600, color: '#0f2540', marginBottom: 6 }}>Generating…</div>
                 <div style={{ fontSize: 13, color: '#94a3b8', animation: 'pulse 2s infinite' }}>{progress || 'Starting…'}</div>
+                {debugInfo && <div style={{ fontSize: 11, color: '#4A9FD4', marginTop: 6, fontFamily: 'monospace' }}>{debugInfo}</div>}
                 <div style={{ fontSize: 11, color: '#cbd5e1', marginTop: 8 }}>This can take a minute or two for a complete, detailed playbook — feel free to wait, it's still working.</div>
               </div>
             )}
